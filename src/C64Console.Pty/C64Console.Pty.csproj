@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Plain net8.0 so it builds anywhere; the code is marked Windows-only and needs Windows 10 1809+ to run. -->
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>

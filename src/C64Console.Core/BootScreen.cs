@@ -10,17 +10,20 @@ public static class BootScreen
 
     public const string Ready = "READY.";
 
-    public static void Show(ScreenBuffer screen)
+    /// <summary>The banner lines, from the top of the screen down to <c>READY.</c>.</summary>
+    public static IReadOnlyList<string> Lines(int columns)
     {
         // On wider screens, shift the banner so it stays centred.
-        var indent = new string(' ', Math.Max(0, (screen.Columns - OriginalColumns) / 2));
+        var indent = new string(' ', Math.Max(0, (columns - OriginalColumns) / 2));
+        return ["", indent + Title, "", indent + Memory, "", Ready];
+    }
 
+    public static void Show(ScreenBuffer screen)
+    {
         screen.Clear();
-        screen.NewLine();
-        screen.WriteLine(indent + Title);
-        screen.NewLine();
-        screen.WriteLine(indent + Memory);
-        screen.NewLine();
-        screen.WriteLine(Ready);
+        foreach (var line in Lines(screen.Columns))
+        {
+            screen.WriteLine(line);
+        }
     }
 }

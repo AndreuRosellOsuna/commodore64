@@ -55,13 +55,20 @@ public sealed class FrameRenderer
             for (var column = 0; column < Columns; column++)
             {
                 var cell = screen[column, row];
+                var foreground = cell.Foreground;
                 var reverse = cell.Reverse;
                 if (cursorVisible && column == screen.CursorColumn && row == screen.CursorRow)
                 {
                     reverse = !reverse;
+
+                    // Like the C64, a cursor over an empty cell shows in the current text colour.
+                    if (cell.Char == ' ')
+                    {
+                        foreground = screen.Foreground;
+                    }
                 }
 
-                DrawCell(pixels, column, row, cell.Char, C64Palette.ToArgb(cell.Foreground), background, reverse);
+                DrawCell(pixels, column, row, cell.Char, C64Palette.ToArgb(foreground), background, reverse);
             }
         }
     }

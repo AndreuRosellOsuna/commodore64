@@ -5,7 +5,10 @@
         SizeToContent="WidthAndHeight"
         WindowStartupLocation="CenterScreen"
         UseLayoutRounding="True"
-        SnapsToDevicePixels="True">
+        SnapsToDevicePixels="True"
+        KeyboardNavigation.TabNavigation="None"
+        KeyboardNavigation.ControlTabNavigation="None"
+        KeyboardNavigation.DirectionalNavigation="None">
     <!-- The window background is set to the border colour, so any space around the scaled frame blends in. -->
     <Grid x:Name="Root">
         <Image x:Name="Screen"

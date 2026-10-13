@@ -8,7 +8,21 @@ See [PLAN.md](PLAN.md) for the full roadmap.
 
 ## Status
 
-**Milestone 1 (skeleton) is done.** The app opens a C64-style window with the boot screen and a blinking cursor. You can type, use Enter and Backspace, and text scrolls. Typing is only echoed for now. A real shell (cmd / PowerShell) comes in milestone 2.
+| Milestone | State | Git tag |
+|-----------|-------|---------|
+| 1. Skeleton: C64 window, boot screen, blinking cursor | ✅ done | `MILESTONE_1` |
+| 2. Shell hosting: cmd.exe runs inside the window through ConPTY | ✅ done | |
+| 3. VT completeness: scroll regions, alternate screen, resize, scrollback, copy/paste | next | |
+
+The window now runs a real **cmd.exe**. It prints the C64 banner and `READY.`, then gives you the normal cmd prompt. Typing, Enter, Backspace, the arrow keys, Home/End, Delete, Tab completion, Ctrl+C and the F-keys are all passed to the shell. Text colours from programs are mapped to the closest C64 colours. Typing `exit` closes the window.
+
+The screen is 40 columns wide, like the C64. Since that's narrow for cmd, you can widen it:
+
+```powershell
+C64Console.exe --columns 80
+```
+
+Requires Windows 10 version 1809 or later, which is when ConPTY was added.
 
 ## Run it
 
@@ -36,7 +50,8 @@ dotnet run --project tools/C64Console.Preview -- docs/boot-screen.png 2 40
 
 | Path | What it is |
 |------|------------|
-| `src/C64Console.Core` | Platform-independent logic: palette, font, screen buffer, frame renderer, boot screen, cursor blink |
+| `src/C64Console.Core` | Platform-independent logic: palette, font, screen buffer, VT parser (`VtTerminal`), key encoding, frame renderer, boot screen, cursor blink |
+| `src/C64Console.Pty` | Runs the shell inside a Windows pseudo console (ConPTY) |
 | `src/C64Console.App` | WPF window. It shows the rendered frame, scaled by a whole number for crisp pixels |
 | `src/C64Console.Core/Assets/font.txt` | The 8×8 font as editable ASCII art |
 | `tests/C64Console.Core.Tests` | xUnit tests for Core |
