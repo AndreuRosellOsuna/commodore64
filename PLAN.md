@@ -93,7 +93,7 @@ Defaults: border = 14 (light blue), background = 6 (blue), text = 14 (light blue
 | Phase | Deliverable | Est. effort |
 |-------|-------------|-------------|
 | **0. Quick win (optional, 1 hour)** | A Windows Terminal profile with a C64 colour scheme, C64 Pro Mono font and a CRT `experimental.pixelShaderPath` HLSL shader. Proves the look before writing any code. | 0.5 day |
-| **1. Skeleton** | .NET 8 solution, WPF window, framebuffer, 8×8 font atlas, static C64 boot screen with blinking cursor | 2–3 days |
+| **1. Skeleton** ✅ done | .NET 8 solution, WPF window, framebuffer, 8×8 font atlas, static C64 boot screen with blinking cursor | 2–3 days |
 | **2. Shell hosting** | ConPTY host plus a minimal VT parser. `cmd.exe` runs, you can type and see output, and Enter, Backspace and arrow keys work. | 3–5 days |
 | **3. VT completeness** | SGR colours mapped to the C64 palette, erase/scroll, alternate screen (so `vim` and `less` work in WSL), resize, scrollback with the mouse wheel, copy/paste | 5–7 days |
 | **4. Look & feel polish** | Authentic/Modern layouts, integer scaling, fullscreen, CRT shader, Ctrl+F1..F8 colour keys, custom `READY.` prompt scripts for cmd and PowerShell | 3–4 days |
@@ -106,14 +106,14 @@ Defaults: border = 14 (light blue), background = 6 (blue), text = 14 (light blue
 
 ```
 /src
-  C64Console.App/          WPF app: window, input, settings
-  C64Console.Core/         VtParser, ScreenBuffer, ColorMapper (no UI; testable)
-  C64Console.Pty/          ConPTY P/Invoke wrapper
-  C64Console.Rendering/    Glyph atlas, framebuffer, CRT shader
-/assets
-  fonts/  shaders/  sounds/
+  C64Console.App/          WPF app: window, input, settings, CRT shader
+  C64Console.Core/         Font, ScreenBuffer, FrameRenderer, VtParser, ColorMapper (no UI; testable)
+    Assets/font.txt        8×8 font as ASCII art
+  C64Console.Pty/          ConPTY P/Invoke wrapper (milestone 2)
 /tests
   C64Console.Core.Tests/
+/tools
+  C64Console.Preview/      Renders screenshots without Windows
 /extras
   windows-terminal/        Phase 0 profile, colour scheme and HLSL shader
   prompts/                 READY.-style prompts for cmd and PowerShell

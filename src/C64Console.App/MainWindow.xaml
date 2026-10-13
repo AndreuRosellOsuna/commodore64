@@ -1,0 +1,17 @@
+<Window x:Class="C64Console.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="C64 Console"
+        SizeToContent="WidthAndHeight"
+        WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+    <!-- The window background is set to the border colour, so any space around the scaled frame blends in. -->
+    <Grid x:Name="Root">
+        <Image x:Name="Screen"
+               Stretch="Fill"
+               HorizontalAlignment="Center"
+               VerticalAlignment="Center"
+               RenderOptions.BitmapScalingMode="NearestNeighbor" />
+    </Grid>
+</Window>

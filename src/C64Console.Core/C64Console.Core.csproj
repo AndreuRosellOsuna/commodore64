@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\font.txt" LogicalName="C64Console.Core.Assets.font.txt" />
+  </ItemGroup>
+</Project>
