@@ -1,26 +1,47 @@
 using System.Globalization;
+using C64Console.Core;
 
 namespace C64Console.App;
 
 /// <summary>
-/// Command-line options: <c>--columns N</c> and <c>--rows N</c> set the starting screen size
-/// (default 40×25, like the C64). Resizing the window changes the size afterwards.
+/// Command-line options:
+/// <list type="bullet">
+/// <item><c>--layout modern|authentic</c>: a resizable grid (default) or a fixed 40×25 screen.</item>
+/// <item><c>--columns N</c>, <c>--rows N</c>: the starting grid in the modern layout (default 80×25).</item>
+/// <item><c>--crt</c>: start with the CRT effect on.</item>
+/// <item><c>--prompt ready|classic</c>: the C64 <c>READY.</c> prompt (default) or cmd's usual one.</item>
+/// </list>
 /// </summary>
-internal static class CommandLine
+internal sealed record CommandLine(Layout Layout, int Columns, int Rows, bool Crt, PromptStyle Prompt)
 {
-    public const int DefaultColumns = 40;
-    public const int DefaultRows = 25;
+    public const int DefaultColumns = 80;
 
-    public static int Columns(string[] args) => Option(args, "--columns", DefaultColumns, 20, 250);
-
-    public static int Rows(string[] args) => Option(args, "--rows", DefaultRows, 5, 100);
-
-    private static int Option(string[] args, string name, int fallback, int min, int max)
+    public static CommandLine Parse(string[] args)
     {
-        var index = Array.IndexOf(args, name);
-        return index >= 0 && index + 1 < args.Length &&
-               int.TryParse(args[index + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+        var layout = Value(args, "--layout") is { } l && l.Equals("authentic", StringComparison.OrdinalIgnoreCase)
+            ? Layout.Authentic
+            : Layout.Modern;
+        var prompt = Value(args, "--prompt") is { } p && p.Equals("classic", StringComparison.OrdinalIgnoreCase)
+            ? PromptStyle.Classic
+            : PromptStyle.Ready;
+        var columns = Number(args, "--columns", DefaultColumns, ScreenLayout.MinColumns, ScreenLayout.MaxColumns);
+        var rows = Number(args, "--rows", ScreenLayout.AuthenticRows, ScreenLayout.MinRows, ScreenLayout.MaxRows);
+        if (layout == Layout.Authentic)
+        {
+            (columns, rows) = (ScreenLayout.AuthenticColumns, ScreenLayout.AuthenticRows);
+        }
+
+        return new CommandLine(layout, columns, rows, args.Contains("--crt", StringComparer.OrdinalIgnoreCase), prompt);
+    }
+
+    private static string? Value(string[] args, string name)
+    {
+        var index = Array.FindIndex(args, a => a.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+
+    private static int Number(string[] args, string name, int fallback, int min, int max) =>
+        int.TryParse(Value(args, name), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
             ? Math.Clamp(value, min, max)
             : fallback;
-    }
 }

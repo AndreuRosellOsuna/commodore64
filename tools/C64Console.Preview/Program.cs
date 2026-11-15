@@ -2,10 +2,12 @@ using C64Console.Core;
 using C64Console.Preview;
 
 // Renders the boot screen to a PNG so the look can be checked on any OS (the app itself needs Windows).
-// Usage: dotnet run --project tools/C64Console.Preview -- [output.png] [scale] [columns]
-var output = args.Length > 0 ? args[0] : "preview.png";
-var scale = args.Length > 1 ? int.Parse(args[1]) : 2;
-var columns = args.Length > 2 ? int.Parse(args[2]) : 40;
+// Usage: dotnet run --project tools/C64Console.Preview -- [output.png] [scale] [columns] [--crt]
+var crt = args.Contains("--crt");
+var positional = args.Where(a => a != "--crt").ToArray();
+var output = positional.Length > 0 ? positional[0] : "preview.png";
+var scale = positional.Length > 1 ? int.Parse(positional[1]) : 2;
+var columns = positional.Length > 2 ? int.Parse(positional[2]) : 40;
 const int rows = 25;
 
 var theme = C64Theme.Default;
@@ -16,16 +18,27 @@ var renderer = new FrameRenderer(columns, rows);
 var frame = renderer.CreateFrame();
 renderer.Render(screen, theme, cursorVisible: true, frame);
 
-var width = renderer.Width * scale;
-var height = renderer.Height * scale;
-var scaled = new uint[width * height];
-for (var y = 0; y < height; y++)
+uint[] pixels;
+int width, height;
+if (crt)
 {
-    for (var x = 0; x < width; x++)
+    var filter = new CrtFilter(renderer.Width, renderer.Height, scale);
+    pixels = filter.CreateOutput();
+    filter.Apply(frame, pixels);
+    (width, height) = (filter.Width, filter.Height);
+}
+else
+{
+    (width, height) = (renderer.Width * scale, renderer.Height * scale);
+    pixels = new uint[width * height];
+    for (var y = 0; y < height; y++)
     {
-        scaled[y * width + x] = frame[y / scale * renderer.Width + x / scale];
+        for (var x = 0; x < width; x++)
+        {
+            pixels[y * width + x] = frame[y / scale * renderer.Width + x / scale];
+        }
     }
 }
 
-PngWriter.Write(output, scaled, width, height);
+PngWriter.Write(output, pixels, width, height);
 Console.WriteLine($"Wrote {output} ({width}×{height})");

@@ -16,11 +16,9 @@ public partial class MainWindow : Window
     private const string AppTitle = "C64 Console";
     private const int MaxStartupScale = 3;
     private const int MaxScale = 8;
-    private const int MinColumns = 20;
-    private const int MinRows = 5;
     private const int WheelLines = 3;
 
-    private readonly C64Theme _theme = C64Theme.Default;
+    private readonly CommandLine _options;
     private readonly ScreenBuffer _screen;
     private readonly VtTerminal _terminal;
     private readonly Stopwatch _blinkClock = Stopwatch.StartNew();
@@ -35,8 +33,22 @@ public partial class MainWindow : Window
     private uint[] _frame;
     private WriteableBitmap _bitmap;
 
+    // With the CRT effect on, the frame is scaled up and filtered on the CPU into _crtOutput,
+    // and the bitmap is shown at one bitmap pixel per screen pixel.
+    private CrtFilter? _crt;
+    private uint[]? _crtOutput;
+
     /// <summary>Screen pixels per C64 pixel, in physical (device) pixels.</summary>
     private int _scale;
+
+    private Layout _layout;
+    private bool _crtEnabled;
+
+    // Window settings to restore when leaving fullscreen.
+    private bool _fullscreen;
+    private WindowStyle _windowedStyle;
+    private ResizeMode _windowedResizeMode;
+    private WindowState _windowedState;
 
     /// <summary>How many lines the view is scrolled back into the scrollback; 0 shows the live screen.</summary>
     private int _scrollOffset;
@@ -54,29 +66,36 @@ public partial class MainWindow : Window
     private int _renderedScrollOffset;
     private TextSelection? _renderedSelection;
 
+    private C64Theme Theme => _terminal.Theme;
+
     public MainWindow()
     {
         InitializeComponent();
 
-        var args = Environment.GetCommandLineArgs();
-        var columns = CommandLine.Columns(args);
-        var rows = CommandLine.Rows(args);
-        _screen = new ScreenBuffer(columns, rows, _theme.Foreground);
-        _terminal = new VtTerminal(_screen, _theme);
+        _options = CommandLine.Parse(Environment.GetCommandLineArgs());
+        _layout = _options.Layout;
+        _crtEnabled = _options.Crt;
+        _screen = new ScreenBuffer(_options.Columns, _options.Rows, C64Theme.Default.Foreground);
+        _terminal = new VtTerminal(_screen, C64Theme.Default);
         _terminal.TitleChanged += title => Title = string.IsNullOrWhiteSpace(title) ? AppTitle : $"{AppTitle} - {title}";
         _terminal.Response += response => _session?.Write(response);
 
-        (_renderer, _frame, _bitmap) = CreateFrame(columns, rows);
-        Background = new SolidColorBrush(ToColor(C64Palette.ToArgb(_theme.Border)));
-
         // Open at the largest whole-number scale (up to 3×) that fits comfortably on screen.
         // OnContentRendered then releases the size so the user can resize freely.
+        // Sizes are worked out in physical pixels and converted to WPF's device-independent units,
+        // so the grid that FitScreen computes later matches the one we start with on high-DPI screens.
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var startup = new FrameRenderer(_options.Columns, _options.Rows);
         _scale = Math.Clamp(
-            (int)Math.Min(SystemParameters.WorkArea.Width * 0.9 / _renderer.Width, SystemParameters.WorkArea.Height * 0.9 / _renderer.Height),
+            (int)Math.Min(
+                SystemParameters.WorkArea.Width * dpi.DpiScaleX * 0.9 / startup.Width,
+                SystemParameters.WorkArea.Height * dpi.DpiScaleY * 0.9 / startup.Height),
             1,
             MaxStartupScale);
-        Root.Width = Screen.Width = _renderer.Width * _scale;
-        Root.Height = Screen.Height = _renderer.Height * _scale;
+        (_renderer, _frame, _bitmap) = CreateFrame(_options.Columns, _options.Rows);
+        UpdateWindowBackground();
+        Root.Width = Screen.Width = _renderer.Width * _scale / dpi.DpiScaleX;
+        Root.Height = Screen.Height = _renderer.Height * _scale / dpi.DpiScaleY;
         RenderIfChanged();
 
         // Poll often enough to catch each blink edge promptly; we only redraw when something changed.
@@ -97,20 +116,38 @@ public partial class MainWindow : Window
         Closed += OnClosed;
     }
 
+    /// <summary>Creates the renderer and bitmap for a grid size at the current scale and CRT setting.</summary>
     private (FrameRenderer, uint[], WriteableBitmap) CreateFrame(int columns, int rows)
     {
         var renderer = new FrameRenderer(columns, rows);
-        var bitmap = new WriteableBitmap(renderer.Width, renderer.Height, 96, 96, PixelFormats.Bgra32, null);
+        if (_crtEnabled)
+        {
+            _crt = new CrtFilter(renderer.Width, renderer.Height, _scale);
+            _crtOutput = _crt.CreateOutput();
+        }
+        else
+        {
+            _crt = null;
+            _crtOutput = null;
+        }
+
+        var bitmap = _crt is { } crt
+            ? new WriteableBitmap(crt.Width, crt.Height, 96, 96, PixelFormats.Bgra32, null)
+            : new WriteableBitmap(renderer.Width, renderer.Height, 96, 96, PixelFormats.Bgra32, null);
         Screen.Source = bitmap;
         _renderedVersion = -1;
         return (renderer, renderer.CreateFrame(), bitmap);
     }
 
+    /// <summary>The space around the picture: the border colour, or black like a TV's bezel with the CRT effect.</summary>
+    private void UpdateWindowBackground() =>
+        Background = _crtEnabled ? Brushes.Black : new SolidColorBrush(ToColor(C64Palette.ToArgb(Theme.Border)));
+
     private void StartShell()
     {
         var cmd = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
         var session = new PseudoConsoleSession(
-            ShellCommands.CmdWithBanner(cmd, _screen.Columns),
+            ShellCommands.CmdWithBanner(cmd, _screen.Columns, _options.Prompt),
             _screen.Columns,
             _screen.Rows,
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
@@ -203,11 +240,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Fits the text grid to the window: at the current pixel scale, as many columns and rows as fit,
-    /// and tells the shell about the new size. The frame is drawn at a whole-number scale in physical
-    /// pixels, so every C64 pixel is a crisp square; leftover space shows the border colour.
+    /// Fits the picture to the window. In the modern layout the grid grows or shrinks at the current pixel scale;
+    /// in the authentic layout the grid stays 40×25 and the scale grows. The shell is told about grid changes.
+    /// The frame is drawn at a whole-number scale in physical pixels, so every C64 pixel is a crisp square;
+    /// leftover space shows the border colour.
     /// </summary>
-    private void FitScreen()
+    private void FitScreen(bool rebuild = false)
     {
         if (!_sizeReleased || Root.ActualWidth <= 0 || Root.ActualHeight <= 0)
         {
@@ -215,16 +253,13 @@ public partial class MainWindow : Window
         }
 
         var dpi = VisualTreeHelper.GetDpi(this);
-        var devicePixelsWide = Root.ActualWidth * dpi.DpiScaleX;
-        var devicePixelsHigh = Root.ActualHeight * dpi.DpiScaleY;
+        var (columns, rows, scale) = ScreenLayout.Fit(
+            _layout, Root.ActualWidth * dpi.DpiScaleX, Root.ActualHeight * dpi.DpiScaleY, _scale, _renderer.BorderX, _renderer.BorderY);
 
-        // Small epsilon: the window size round-trips through DIPs and may come back a hair short.
-        var columns = Math.Max(MinColumns, (int)((devicePixelsWide / _scale + 0.01 - 2 * _renderer.BorderX) / C64Font.GlyphSize));
-        var rows = Math.Max(MinRows, (int)((devicePixelsHigh / _scale + 0.01 - 2 * _renderer.BorderY) / C64Font.GlyphSize));
-        if (columns != _screen.Columns || rows != _screen.Rows)
+        var gridChanged = columns != _screen.Columns || rows != _screen.Rows;
+        if (gridChanged)
         {
             _screen.Resize(columns, rows);
-            (_renderer, _frame, _bitmap) = CreateFrame(columns, rows);
             _selection = null;
             SetScrollOffset(_scrollOffset);
             try
@@ -237,20 +272,73 @@ public partial class MainWindow : Window
             }
         }
 
+        // The CRT bitmap is drawn at the final size, so it also has to be rebuilt when the scale changes.
+        if (gridChanged || rebuild || (scale != _scale && _crtEnabled))
+        {
+            _scale = scale;
+            (_renderer, _frame, _bitmap) = CreateFrame(columns, rows);
+        }
+
+        _scale = scale;
         Screen.Width = _renderer.Width * _scale / dpi.DpiScaleX;
         Screen.Height = _renderer.Height * _scale / dpi.DpiScaleY;
         RenderIfChanged();
     }
 
-    /// <summary>Ctrl+Plus / Ctrl+Minus: bigger or smaller pixels. The window keeps its size; the grid adapts.</summary>
+    /// <summary>Ctrl+Plus / Ctrl+Minus (modern layout): bigger or smaller pixels. The window keeps its size; the grid adapts.</summary>
     private void ChangeScale(int delta)
     {
         var scale = Math.Clamp(_scale + delta, 1, MaxScale);
-        if (scale != _scale)
+        if (scale != _scale && _layout == Layout.Modern)
         {
             _scale = scale;
-            FitScreen();
+            FitScreen(rebuild: true);
         }
+    }
+
+    /// <summary>Ctrl+Shift+L: switches between the fixed 40×25 screen and the resizable grid.</summary>
+    private void ToggleLayout()
+    {
+        _layout = _layout == Layout.Modern ? Layout.Authentic : Layout.Modern;
+        FitScreen(rebuild: true);
+    }
+
+    /// <summary>Ctrl+Shift+R: turns the CRT effect on or off.</summary>
+    private void ToggleCrt()
+    {
+        _crtEnabled = !_crtEnabled;
+        UpdateWindowBackground();
+        FitScreen(rebuild: true);
+    }
+
+    /// <summary>Alt+Enter: borderless fullscreen and back.</summary>
+    private void ToggleFullscreen()
+    {
+        if (!_fullscreen)
+        {
+            (_windowedStyle, _windowedResizeMode, _windowedState) = (WindowStyle, ResizeMode, WindowState);
+
+            // WPF only covers the taskbar if the window style is None before it is maximised.
+            WindowState = WindowState.Normal;
+            WindowStyle = WindowStyle.None;
+            ResizeMode = ResizeMode.NoResize;
+            WindowState = WindowState.Maximized;
+        }
+        else
+        {
+            WindowStyle = _windowedStyle;
+            ResizeMode = _windowedResizeMode;
+            WindowState = _windowedState;
+        }
+
+        _fullscreen = !_fullscreen;
+    }
+
+    /// <summary>The C64 colour keys: change the colour of text typed and printed from now on.</summary>
+    private void SetTextColour(byte colour)
+    {
+        _terminal.Theme = Theme with { Foreground = colour };
+        RenderIfChanged();
     }
 
     private void RenderIfChanged()
@@ -262,8 +350,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        _renderer.Render(_screen, _theme, cursorVisible, _frame, _scrollOffset, _selection);
-        _bitmap.WritePixels(new Int32Rect(0, 0, _renderer.Width, _renderer.Height), _frame, _renderer.Width * sizeof(uint), 0);
+        _renderer.Render(_screen, Theme, cursorVisible, _frame, _scrollOffset, _selection);
+        if (_crt is { } crt && _crtOutput is { } output)
+        {
+            crt.Apply(_frame, output);
+            _bitmap.WritePixels(new Int32Rect(0, 0, crt.Width, crt.Height), output, crt.Width * sizeof(uint), 0);
+        }
+        else
+        {
+            _bitmap.WritePixels(new Int32Rect(0, 0, _renderer.Width, _renderer.Height), _frame, _renderer.Width * sizeof(uint), 0);
+        }
+
         _renderedVersion = _screen.Version;
         _renderedCursor = cursorVisible;
         _renderedScrollOffset = _scrollOffset;
@@ -304,6 +401,13 @@ public partial class MainWindow : Window
         var point = e.GetPosition(Screen);
         var x = point.X * _renderer.Width / Math.Max(1, Screen.ActualWidth);
         var y = point.Y * _renderer.Height / Math.Max(1, Screen.ActualHeight);
+
+        // With the CRT effect the picture is curved: look up which frame pixel is shown under the mouse.
+        if (_crt is { } crt && crt.SourcePixelAt((int)(x * crt.Scale), (int)(y * crt.Scale)) is { } source)
+        {
+            (x, y) = (source.X + 0.5, source.Y + 0.5);
+        }
+
         var (column, row) = _renderer.CellAt(x, y);
         return new BufferPosition(_screen.LinesScrolledOff + row - _scrollOffset, column);
     }
@@ -441,8 +545,24 @@ public partial class MainWindow : Window
     private bool HandleAppShortcut(Key key, KeyModifiers modifiers)
     {
         const KeyModifiers ctrlShift = KeyModifiers.Control | KeyModifiers.Shift;
+        if (key is >= Key.F1 and <= Key.F8 && modifiers is KeyModifiers.Control or ctrlShift &&
+            C64ColorKeys.ColorFor(key - Key.F1 + 1, commodoreKey: modifiers == ctrlShift) is { } colour)
+        {
+            SetTextColour(colour);
+            return true;
+        }
+
         switch (key)
         {
+            case Key.Enter when modifiers == KeyModifiers.Alt:
+                ToggleFullscreen();
+                return true;
+            case Key.L when modifiers == ctrlShift:
+                ToggleLayout();
+                return true;
+            case Key.R when modifiers == ctrlShift:
+                ToggleCrt();
+                return true;
             // Ctrl+C copies when something is selected, and is sent to the shell as an interrupt otherwise.
             case Key.C when modifiers == ctrlShift || (modifiers == KeyModifiers.Control && _selection is not null):
                 CopySelection();

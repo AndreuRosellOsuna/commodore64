@@ -92,6 +92,9 @@ public sealed class ScreenBuffer
 
     public Cell this[int column, int row] => _cells[row * Columns + column];
 
+    /// <summary>Marks the screen as changed without changing it, e.g. when the cursor's look changes.</summary>
+    public void Invalidate() => Version++;
+
     private Cell BlankCell => Cell.Blank(Foreground, Background);
 
     /// <summary>Blanks the whole screen and moves the cursor home.</summary>
