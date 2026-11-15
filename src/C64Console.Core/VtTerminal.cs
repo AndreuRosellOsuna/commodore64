@@ -17,7 +17,7 @@ public sealed class VtTerminal
     private const int MaxOscLength = 4096;
     private const int TabWidth = 8;
 
-    private readonly C64Theme _theme;
+    private C64Theme _theme;
     private readonly List<int> _params = new(MaxParams);
     private readonly StringBuilder _osc = new();
 
@@ -51,6 +51,21 @@ public sealed class VtTerminal
     }
 
     public ScreenBuffer Screen { get; }
+
+    /// <summary>
+    /// The colours used for "default" text. Changing it (e.g. with the C64 colour keys) affects text written
+    /// from now on in the default colour; text already on the screen keeps its colour, like on a C64.
+    /// </summary>
+    public C64Theme Theme
+    {
+        get => _theme;
+        set
+        {
+            _theme = value;
+            UpdateForeground();
+            Screen.Invalidate(); // the cursor shows the current colour
+        }
+    }
 
     /// <summary>Set by DECTCEM (<c>ESC [ ? 25 h/l</c>).</summary>
     public bool CursorVisible { get; private set; } = true;
@@ -389,7 +404,7 @@ public sealed class VtTerminal
                 break;
             case 25:
                 CursorVisible = on;
-                Screen.MoveCursorBy(0, 0); // bump the version so the change is drawn
+                Screen.Invalidate();
                 break;
             case 47 or 1047:
                 Screen.UseAlternateScreen(on);
