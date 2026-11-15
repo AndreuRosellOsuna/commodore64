@@ -11,8 +11,8 @@ See [PLAN.md](PLAN.md) for the full roadmap.
 | Milestone | State | Git tag |
 |-----------|-------|---------|
 | 1. Skeleton: C64 window, boot screen, blinking cursor | ✅ done | `MILESTONE_1` |
-| 2. Shell hosting: cmd.exe runs inside the window through ConPTY | ✅ done | |
-| 3. VT completeness: scroll regions, alternate screen, resize, scrollback, copy/paste | ✅ done | |
+| 2. Shell hosting: cmd.exe runs inside the window through ConPTY | ✅ done | `MILESTONE_2` |
+| 3. VT completeness: scroll regions, alternate screen, resize, scrollback, copy/paste | ✅ done | `MILESTONE_3` |
 | 4. Look & feel: layouts, fullscreen, CRT shader, colour keys, `READY.` prompts | next | |
 
 The window now runs a real **cmd.exe**. It prints the C64 banner and `READY.`, then gives you the normal cmd prompt. Typing, Enter, Backspace, the arrow keys, Home/End, Delete, Tab completion, Ctrl+C and the F-keys are all passed to the shell. Text colours from programs are mapped to the closest C64 colours. Typing `exit` closes the window.
