@@ -35,7 +35,10 @@ public sealed class FrameRenderer
 
     public uint[] CreateFrame() => new uint[Width * Height];
 
-    public void Render(ScreenBuffer screen, C64Theme theme, bool cursorVisible, Span<uint> pixels)
+    /// <param name="scrollOffset">How many lines the view is scrolled back into the scrollback (0 = live screen).</param>
+    /// <param name="selection">Cells inside it are drawn in reverse video.</param>
+    public void Render(
+        ScreenBuffer screen, C64Theme theme, bool cursorVisible, Span<uint> pixels, int scrollOffset = 0, TextSelection? selection = null)
     {
         if (screen.Columns != Columns || screen.Rows != Rows)
         {
@@ -49,15 +52,16 @@ public sealed class FrameRenderer
 
         pixels[..(Width * Height)].Fill(C64Palette.ToArgb(theme.Border));
 
-        var background = C64Palette.ToArgb(theme.Background);
+        var cursorRow = screen.CursorRow + scrollOffset;
         for (var row = 0; row < Rows; row++)
         {
+            var line = screen.LinesScrolledOff + row - scrollOffset;
             for (var column = 0; column < Columns; column++)
             {
-                var cell = screen[column, row];
+                var cell = screen.GetCell(column, line);
                 var foreground = cell.Foreground;
                 var reverse = cell.Reverse;
-                if (cursorVisible && column == screen.CursorColumn && row == screen.CursorRow)
+                if (cursorVisible && column == screen.CursorColumn && row == cursorRow)
                 {
                     reverse = !reverse;
 
@@ -68,10 +72,21 @@ public sealed class FrameRenderer
                     }
                 }
 
-                DrawCell(pixels, column, row, cell.Char, C64Palette.ToArgb(foreground), background, reverse);
+                if (selection is { } s && s.Contains(column, line))
+                {
+                    reverse = !reverse;
+                }
+
+                var background = cell.Background == Cell.DefaultBackground ? theme.Background : cell.Background;
+                DrawCell(pixels, column, row, cell.Char, C64Palette.ToArgb(foreground), C64Palette.ToArgb(background), reverse);
             }
         }
     }
+
+    /// <summary>The screen cell under a frame pixel, clamped to the text area (so dragging into the border still selects).</summary>
+    public (int Column, int Row) CellAt(double x, double y) =>
+        (Math.Clamp((int)Math.Floor((x - BorderX) / C64Font.GlyphSize), 0, Columns - 1),
+         Math.Clamp((int)Math.Floor((y - BorderY) / C64Font.GlyphSize), 0, Rows - 1));
 
     private void DrawCell(Span<uint> pixels, int column, int row, char c, uint foreground, uint background, bool reverse)
     {

@@ -120,14 +120,15 @@ public class VtTerminalTests
     }
 
     [Fact]
-    public void Sgr_skips_extended_colour_arguments()
+    public void Sgr_extended_colours_consume_their_arguments()
     {
         // 38;2;r;g;b must not be read as "2 = dim, 31 = red" etc.
         Feed("\x1B[38;2;31;32;33mA\x1B[38;5;9mB\x1B[48;5;1;33mC");
 
-        Assert.Equal(C64Theme.Default.Foreground, _screen[0, 0].Foreground);
+        Assert.Equal(C64Palette.Black, _screen[0, 0].Foreground);
         Assert.Equal(C64Palette.LightRed, _screen[1, 0].Foreground);
         Assert.Equal(C64Palette.Orange, _screen[2, 0].Foreground);
+        Assert.Equal(C64Palette.Red, _screen[2, 0].Background);
     }
 
     [Fact]

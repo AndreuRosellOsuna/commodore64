@@ -43,7 +43,8 @@ public enum KeyModifiers
 /// <summary>Turns key presses into the xterm-style input sequences that ConPTY understands.</summary>
 public static class KeyEncoder
 {
-    public static string Encode(TerminalKey key, KeyModifiers modifiers = KeyModifiers.None)
+    /// <param name="applicationCursorKeys">DECCKM is on: unmodified arrows, Home and End use <c>ESC O</c> instead of <c>ESC [</c>.</param>
+    public static string Encode(TerminalKey key, KeyModifiers modifiers = KeyModifiers.None, bool applicationCursorKeys = false)
     {
         // xterm adds a modifier parameter: 1 + (Shift=1, Alt=2, Ctrl=4).
         var m = (int)modifiers;
@@ -55,12 +56,12 @@ public static class KeyEncoder
             TerminalKey.Backspace => altPrefix + (modifiers.HasFlag(KeyModifiers.Control) ? "\b" : "\x7F"),
             TerminalKey.Tab => modifiers.HasFlag(KeyModifiers.Shift) ? "\x1B[Z" : altPrefix + "\t",
             TerminalKey.Escape => altPrefix + "\x1B",
-            TerminalKey.Up => Cursor('A', m),
-            TerminalKey.Down => Cursor('B', m),
-            TerminalKey.Right => Cursor('C', m),
-            TerminalKey.Left => Cursor('D', m),
-            TerminalKey.Home => Cursor('H', m),
-            TerminalKey.End => Cursor('F', m),
+            TerminalKey.Up => Cursor('A', m, applicationCursorKeys),
+            TerminalKey.Down => Cursor('B', m, applicationCursorKeys),
+            TerminalKey.Right => Cursor('C', m, applicationCursorKeys),
+            TerminalKey.Left => Cursor('D', m, applicationCursorKeys),
+            TerminalKey.Home => Cursor('H', m, applicationCursorKeys),
+            TerminalKey.End => Cursor('F', m, applicationCursorKeys),
             TerminalKey.F1 => Ss3('P', m),
             TerminalKey.F2 => Ss3('Q', m),
             TerminalKey.F3 => Ss3('R', m),
@@ -85,7 +86,19 @@ public static class KeyEncoder
     public static string? EncodeControlLetter(char letter) =>
         char.ToUpperInvariant(letter) is var upper and >= 'A' and <= 'Z' ? ((char)(upper - 'A' + 1)).ToString() : null;
 
-    private static string Cursor(char final, int m) => m == 0 ? $"\x1B[{final}" : $"\x1B[1;{m + 1}{final}";
+    private static string Cursor(char final, int m, bool application) =>
+        m != 0 ? $"\x1B[1;{m + 1}{final}" : application ? $"\x1BO{final}" : $"\x1B[{final}";
+
+    /// <summary>
+    /// Prepares clipboard text for the shell: line breaks become CR (what Enter sends), and with bracketed paste
+    /// the text is wrapped in <c>ESC [ 200 ~</c> … <c>ESC [ 201 ~</c> so the program knows it was pasted.
+    /// Escape characters are removed so pasted text can't end the bracket early or inject sequences.
+    /// </summary>
+    public static string EncodePaste(string text, bool bracketed)
+    {
+        var normalized = text.Replace("\r\n", "\r").Replace('\n', '\r').Replace("\x1B", "");
+        return bracketed ? $"\x1B[200~{normalized}\x1B[201~" : normalized;
+    }
 
     private static string Ss3(char final, int m) => m == 0 ? $"\x1BO{final}" : $"\x1B[1;{m + 1}{final}";
 
