@@ -95,7 +95,7 @@ Defaults: border = 14 (light blue), background = 6 (blue), text = 14 (light blue
 | **0. Quick win (optional, 1 hour)** | A Windows Terminal profile with a C64 colour scheme, C64 Pro Mono font and a CRT `experimental.pixelShaderPath` HLSL shader. Proves the look before writing any code. | 0.5 day |
 | **1. Skeleton** ✅ done | .NET 8 solution, WPF window, framebuffer, 8×8 font atlas, static C64 boot screen with blinking cursor | 2–3 days |
 | **2. Shell hosting** ✅ done | ConPTY host plus a minimal VT parser. `cmd.exe` runs, you can type and see output, and Enter, Backspace and arrow keys work. | 3–5 days |
-| **3. VT completeness** | SGR colours mapped to the C64 palette, erase/scroll, alternate screen (so `vim` and `less` work in WSL), resize, scrollback with the mouse wheel, copy/paste | 5–7 days |
+| **3. VT completeness** ✅ done | SGR colours mapped to the C64 palette, erase/scroll, alternate screen (so `vim` and `less` work in WSL), resize, scrollback with the mouse wheel, copy/paste | 5–7 days |
 | **4. Look & feel polish** | Authentic/Modern layouts, integer scaling, fullscreen, CRT shader, Ctrl+F1..F8 colour keys, custom `READY.` prompt scripts for cmd and PowerShell | 3–4 days |
 | **5. Sound & extras** | Key clicks, startup chirp, settings UI (in the C64 style), choice of shell | 2 days |
 | **6. Ship** | Unit tests for the parser and buffer, GitHub Actions CI (`windows-latest`), single-file publish, MSIX or Inno Setup installer, README with screenshots | 2–3 days |

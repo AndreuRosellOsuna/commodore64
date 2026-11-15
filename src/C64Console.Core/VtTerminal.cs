@@ -5,8 +5,9 @@ namespace C64Console.Core;
 
 /// <summary>
 /// Parses VT100/xterm output (as produced by Windows ConPTY) and applies it to a <see cref="ScreenBuffer"/>.
-/// It covers what ConPTY needs to draw a shell: printing, cursor movement, erasing, inserting/deleting,
-/// scrolling, 16-colour SGR, cursor show/hide, the window title and cursor position reports.
+/// It covers what ConPTY and full-screen programs need: printing, cursor movement, erasing, inserting/deleting,
+/// scroll regions, the alternate screen, SGR colours (16, 256 and 24-bit, mapped to the C64 palette),
+/// cursor show/hide, application cursor keys, bracketed paste, the window title and cursor position reports.
 /// Anything else is parsed and ignored. Sequences may be split across <see cref="Feed"/> calls.
 /// </summary>
 public sealed class VtTerminal
@@ -26,8 +27,9 @@ public sealed class VtTerminal
     private bool _hasIntermediate;
 
     private bool _bold;
-    private int? _ansiForeground; // null = default colour
-    private (int Column, int Row, byte Foreground, bool Reverse)? _savedCursor;
+    private int? _ansiForeground; // 0-15 = basic ANSI colour (bold may brighten it), null = default colour
+    private byte? _fixedForeground; // a colour from 256-colour or 24-bit SGR, already mapped to the C64 palette
+    private SavedCursor? _savedCursor;
 
     public VtTerminal(ScreenBuffer screen, C64Theme theme)
     {
@@ -52,6 +54,15 @@ public sealed class VtTerminal
 
     /// <summary>Set by DECTCEM (<c>ESC [ ? 25 h/l</c>).</summary>
     public bool CursorVisible { get; private set; } = true;
+
+    /// <summary>DECCKM (<c>ESC [ ? 1 h</c>): arrow keys send <c>ESC O A</c> instead of <c>ESC [ A</c>.</summary>
+    public bool ApplicationCursorKeys { get; private set; }
+
+    /// <summary>Set by <c>ESC [ ? 2004 h</c>: pasted text must be wrapped in <c>ESC [ 200 ~</c> … <c>ESC [ 201 ~</c>.</summary>
+    public bool BracketedPaste { get; private set; }
+
+    /// <summary>DECOM (<c>ESC [ ? 6 h</c>): cursor positions are relative to the scroll region.</summary>
+    public bool OriginMode { get; private set; }
 
     public string? Title { get; private set; }
 
@@ -295,10 +306,12 @@ public sealed class VtTerminal
     {
         if (_privateMarker == '?')
         {
-            if (final is 'h' or 'l' && _params.Contains(25))
+            if (final is 'h' or 'l')
             {
-                CursorVisible = final == 'h';
-                Screen.MoveCursorBy(0, 0); // bump the version so the change is drawn
+                foreach (var mode in _params)
+                {
+                    SetPrivateMode(mode, final == 'h');
+                }
             }
 
             return;
@@ -313,14 +326,15 @@ public sealed class VtTerminal
         switch (final)
         {
             case '@': screen.InsertCharacters(Param(0)); break;
-            case 'A': screen.MoveCursorBy(0, -Param(0)); break;
-            case 'B': screen.MoveCursorBy(0, Param(0)); break;
+            case 'A': MoveCursorVertically(-Param(0)); break;
+            case 'B': MoveCursorVertically(Param(0)); break;
             case 'C': screen.MoveCursorBy(Param(0), 0); break;
             case 'D': screen.MoveCursorBy(-Param(0), 0); break;
-            case 'E': screen.MoveCursorTo(0, screen.CursorRow + Param(0)); break;
-            case 'F': screen.MoveCursorTo(0, screen.CursorRow - Param(0)); break;
+            case 'E': MoveCursorVertically(Param(0)); screen.CarriageReturn(); break;
+            case 'F': MoveCursorVertically(-Param(0)); screen.CarriageReturn(); break;
             case 'G' or '`': screen.MoveCursorTo(Param(0) - 1, screen.CursorRow); break;
-            case 'H' or 'f': screen.MoveCursorTo(Param(1) - 1, Param(0) - 1); break;
+            case 'H' or 'f': SetCursorPosition(Param(1) - 1, Param(0) - 1); break;
+            case 'J' when Param(0, 0) == 3: screen.ClearScrollback(); break;
             case 'J': screen.EraseInDisplay(EraseModeParam()); break;
             case 'K': screen.EraseInLine(EraseModeParam()); break;
             case 'L': screen.InsertLines(Param(0)); break;
@@ -329,7 +343,8 @@ public sealed class VtTerminal
             case 'S': screen.ScrollUp(Param(0)); break;
             case 'T': screen.ScrollDown(Param(0)); break;
             case 'X': screen.EraseCharacters(Param(0)); break;
-            case 'd': screen.MoveCursorTo(screen.CursorColumn, Param(0) - 1); break;
+            case 'd': SetCursorPosition(screen.CursorColumn, Param(0) - 1); break;
+            case 'r': SetScrollRegion(); break;
             case 'm': SelectGraphicRendition(); break;
             case 'n': DeviceStatusReport(); break;
             case 'c': Response?.Invoke("\x1B[?1;0c"); break; // primary device attributes: a plain VT100
@@ -341,7 +356,7 @@ public sealed class VtTerminal
     private EraseMode EraseModeParam() => Param(0, 0) switch
     {
         1 => EraseMode.ToStart,
-        2 or 3 => EraseMode.All,
+        2 => EraseMode.All,
         _ => EraseMode.ToEnd,
     };
 
@@ -358,6 +373,96 @@ public sealed class VtTerminal
         }
     }
 
+    private void SetPrivateMode(int mode, bool on)
+    {
+        switch (mode)
+        {
+            case 1:
+                ApplicationCursorKeys = on;
+                break;
+            case 6:
+                OriginMode = on;
+                SetCursorPosition(0, 0);
+                break;
+            case 7:
+                Screen.AutoWrap = on;
+                break;
+            case 25:
+                CursorVisible = on;
+                Screen.MoveCursorBy(0, 0); // bump the version so the change is drawn
+                break;
+            case 47 or 1047:
+                Screen.UseAlternateScreen(on);
+                break;
+            case 1049:
+                // Save the cursor, switch to a blank alternate screen; on exit switch back and restore the cursor.
+                if (on)
+                {
+                    if (!Screen.IsAlternateScreen)
+                    {
+                        SaveCursor();
+                        Screen.UseAlternateScreen(true);
+                    }
+                }
+                else if (Screen.IsAlternateScreen)
+                {
+                    Screen.UseAlternateScreen(false);
+                    RestoreCursor();
+                }
+
+                break;
+            case 2004:
+                BracketedPaste = on;
+                break;
+        }
+    }
+
+    /// <summary>CUP/VPA: moves to a 0-based position, relative to the scroll region in origin mode.</summary>
+    private void SetCursorPosition(int column, int row)
+    {
+        if (OriginMode)
+        {
+            Screen.MoveCursorTo(column, Math.Min(Screen.ScrollTop + row, Screen.ScrollBottom));
+        }
+        else
+        {
+            Screen.MoveCursorTo(column, row);
+        }
+    }
+
+    /// <summary>CUU/CUD: like a VT100, stops at the scroll margins when starting inside the region.</summary>
+    private void MoveCursorVertically(int rows)
+    {
+        var screen = Screen;
+        var row = screen.CursorRow + rows;
+        if (rows < 0 && screen.CursorRow >= screen.ScrollTop)
+        {
+            row = Math.Max(row, screen.ScrollTop);
+        }
+        else if (rows > 0 && screen.CursorRow <= screen.ScrollBottom)
+        {
+            row = Math.Min(row, screen.ScrollBottom);
+        }
+
+        screen.MoveCursorTo(screen.CursorColumn, row);
+    }
+
+    private void SetScrollRegion()
+    {
+        var top = Param(0) - 1;
+        var bottom = Param(1, Screen.Rows) - 1;
+        if (top == 0 && bottom == Screen.Rows - 1)
+        {
+            Screen.ResetScrollRegion();
+            SetCursorPosition(0, 0);
+        }
+        else if (bottom > top)
+        {
+            Screen.SetScrollRegion(top, bottom);
+            SetCursorPosition(0, 0);
+        }
+    }
+
     private void SelectGraphicRendition()
     {
         for (var i = 0; i < Math.Max(1, _params.Count); i++)
@@ -368,6 +473,8 @@ public sealed class VtTerminal
                 case 0:
                     _bold = false;
                     _ansiForeground = null;
+                    _fixedForeground = null;
+                    Screen.Background = Cell.DefaultBackground;
                     Screen.Reverse = false;
                     break;
                 case 1:
@@ -383,39 +490,74 @@ public sealed class VtTerminal
                     Screen.Reverse = false;
                     break;
                 case >= 30 and <= 37:
-                    _ansiForeground = p - 30;
+                    SetForeground(p - 30);
                     break;
                 case >= 90 and <= 97:
-                    _ansiForeground = p - 90 + 8;
+                    SetForeground(p - 90 + 8);
                     break;
                 case 39:
-                    _ansiForeground = null;
+                    SetForeground(null);
+                    break;
+                case >= 40 and <= 47:
+                    Screen.Background = AnsiColors.ToC64Background(p - 40);
+                    break;
+                case >= 100 and <= 107:
+                    Screen.Background = AnsiColors.ToC64Background(p - 100 + 8);
+                    break;
+                case 49:
+                    Screen.Background = Cell.DefaultBackground;
                     break;
                 case 38 or 48:
-                    // Extended colour: 5;n (256 colours) or 2;r;g;b. Only the first 16 of the 256 are used for now.
-                    var mode = i + 1 < _params.Count ? _params[i + 1] : -1;
-                    if (mode == 5)
-                    {
-                        if (p == 38 && i + 2 < _params.Count && _params[i + 2] is >= 0 and < 16)
-                        {
-                            _ansiForeground = _params[i + 2];
-                        }
-
-                        i += 2;
-                    }
-                    else if (mode == 2)
-                    {
-                        i += 4;
-                    }
-
+                    i = ExtendedColour(i, background: p == 48);
                     break;
             }
         }
 
-        Screen.Foreground = _ansiForeground is { } ansi
-            ? AnsiColors.ToC64Color(_bold && ansi < 8 ? ansi + 8 : ansi)
-            : _theme.Foreground;
+        UpdateForeground();
     }
+
+    /// <summary>Reads <c>38;5;n</c> (256 colours) or <c>38;2;r;g;b</c> (24-bit) starting at <paramref name="i"/>; returns the last index used.</summary>
+    private int ExtendedColour(int i, bool background)
+    {
+        int Arg(int index) => index < _params.Count ? Math.Max(0, _params[index]) : 0;
+
+        byte colour;
+        switch (Arg(i + 1))
+        {
+            case 5 when i + 2 < _params.Count:
+                colour = AnsiColors.FromXterm256(Math.Min(Arg(i + 2), 255), background);
+                i += 2;
+                break;
+            case 2 when i + 4 < _params.Count:
+                colour = C64Palette.Nearest((byte)Math.Min(Arg(i + 2), 255), (byte)Math.Min(Arg(i + 3), 255), (byte)Math.Min(Arg(i + 4), 255));
+                i += 4;
+                break;
+            default:
+                return _params.Count; // malformed: ignore the rest, as xterm does
+        }
+
+        if (background)
+        {
+            Screen.Background = colour;
+        }
+        else
+        {
+            _ansiForeground = null;
+            _fixedForeground = colour;
+        }
+
+        return i;
+    }
+
+    private void SetForeground(int? ansi)
+    {
+        _ansiForeground = ansi;
+        _fixedForeground = null;
+    }
+
+    private void UpdateForeground() =>
+        Screen.Foreground = _fixedForeground
+            ?? (_ansiForeground is { } ansi ? AnsiColors.ToC64Color(_bold && ansi < 8 ? ansi + 8 : ansi) : _theme.Foreground);
 
     private void DispatchOsc()
     {
@@ -430,26 +572,41 @@ public sealed class VtTerminal
     }
 
     private void SaveCursor() =>
-        _savedCursor = (Screen.CursorColumn, Screen.CursorRow, Screen.Foreground, Screen.Reverse);
+        _savedCursor = new SavedCursor(
+            Screen.CursorColumn, Screen.CursorRow, _bold, _ansiForeground, _fixedForeground, Screen.Background, Screen.Reverse, OriginMode);
 
     private void RestoreCursor()
     {
-        if (_savedCursor is { } saved)
-        {
-            Screen.Foreground = saved.Foreground;
-            Screen.Reverse = saved.Reverse;
-            Screen.MoveCursorTo(saved.Column, saved.Row);
-        }
+        var saved = _savedCursor ?? new SavedCursor(0, 0, false, null, null, Cell.DefaultBackground, false, false);
+        _bold = saved.Bold;
+        _ansiForeground = saved.AnsiForeground;
+        _fixedForeground = saved.FixedForeground;
+        Screen.Background = saved.Background;
+        Screen.Reverse = saved.Reverse;
+        OriginMode = saved.OriginMode;
+        UpdateForeground();
+        Screen.MoveCursorTo(saved.Column, saved.Row);
     }
 
     private void Reset()
     {
         _bold = false;
         _ansiForeground = null;
+        _fixedForeground = null;
         _savedCursor = null;
         CursorVisible = true;
+        ApplicationCursorKeys = false;
+        BracketedPaste = false;
+        OriginMode = false;
+        Screen.UseAlternateScreen(false);
+        Screen.ResetScrollRegion();
+        Screen.AutoWrap = true;
         Screen.Reverse = false;
+        Screen.Background = Cell.DefaultBackground;
         Screen.Foreground = _theme.Foreground;
         Screen.Clear();
     }
+
+    private readonly record struct SavedCursor(
+        int Column, int Row, bool Bold, int? AnsiForeground, byte? FixedForeground, byte Background, bool Reverse, bool OriginMode);
 }
