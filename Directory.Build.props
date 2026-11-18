@@ -9,5 +9,8 @@
     <Version>1.0.0</Version>
     <Product>C64 Console</Product>
     <Description>A Windows console with the look and feel of the Commodore 64.</Description>
+
+    <!-- Debug info goes inside the dlls, so no .pdb files end up next to the published exe. -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
   </PropertyGroup>
 </Project>

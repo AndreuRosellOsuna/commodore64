@@ -9,8 +9,8 @@
     <AssemblyName>C64Console</AssemblyName>
     <RootNamespace>C64Console.App</RootNamespace>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <!-- No .pdb next to the published exe. -->
-    <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
+    <!-- A self-contained single-file exe carries the whole .NET runtime; compressing it roughly halves the size. -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
     <!-- Also used as the window icon. The preview tool regenerates it (see README). -->
