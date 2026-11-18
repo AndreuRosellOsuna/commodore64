@@ -2,9 +2,11 @@ using C64Console.Core;
 using C64Console.Preview;
 
 // Renders the boot screen to a PNG so the look can be checked on any OS (the app itself needs Windows).
-// Usage: dotnet run --project tools/C64Console.Preview -- [output.png] [scale] [columns] [--crt]
+// Usage: dotnet run --project tools/C64Console.Preview -- [output.png] [scale] [columns] [--crt] [--settings]
+// --settings draws the settings screen instead of the boot screen.
 var crt = args.Contains("--crt");
-var positional = args.Where(a => a != "--crt").ToArray();
+var settingsScreen = args.Contains("--settings");
+var positional = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToArray();
 var output = positional.Length > 0 ? positional[0] : "preview.png";
 var scale = positional.Length > 1 ? int.Parse(positional[1]) : 2;
 var columns = positional.Length > 2 ? int.Parse(positional[2]) : 40;
@@ -12,11 +14,18 @@ const int rows = 25;
 
 var theme = C64Theme.Default;
 var screen = new ScreenBuffer(columns, rows, theme.Foreground);
-BootScreen.Show(screen);
+if (settingsScreen)
+{
+    new SettingsMenu(new AppSettings { TextColour = C64Palette.Yellow }).Draw(screen, theme);
+}
+else
+{
+    BootScreen.Show(screen);
+}
 
 var renderer = new FrameRenderer(columns, rows);
 var frame = renderer.CreateFrame();
-renderer.Render(screen, theme, cursorVisible: true, frame);
+renderer.Render(screen, theme, cursorVisible: !settingsScreen, frame);
 
 uint[] pixels;
 int width, height;

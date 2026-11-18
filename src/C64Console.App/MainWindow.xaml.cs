@@ -18,11 +18,20 @@ public partial class MainWindow : Window
     private const int MaxScale = 8;
     private const int WheelLines = 3;
 
-    private readonly CommandLine _options;
     private readonly ScreenBuffer _screen;
     private readonly VtTerminal _terminal;
     private readonly Stopwatch _blinkClock = Stopwatch.StartNew();
     private readonly DispatcherTimer _timer;
+    private readonly SoundEffects _sounds = new();
+
+    /// <summary>The current settings. Changes made in the app are saved straight away.</summary>
+    private AppSettings _settings;
+
+    /// <summary>The settings screen while it is open; it is drawn instead of the terminal.</summary>
+    private SettingsMenu? _menu;
+
+    /// <summary>Shell and prompt when the settings screen opened: if either changed, the shell restarts on close.</summary>
+    private (ShellKind Shell, PromptStyle Prompt) _menuShellAtOpen;
 
     // Shell output arrives on a background thread; it is collected here and applied on the UI thread.
     private readonly object _outputLock = new();
@@ -41,8 +50,6 @@ public partial class MainWindow : Window
     /// <summary>Screen pixels per C64 pixel, in physical (device) pixels.</summary>
     private int _scale;
 
-    private Layout _layout;
-    private bool _crtEnabled;
 
     // Window settings to restore when leaving fullscreen.
     private bool _fullscreen;
@@ -68,15 +75,19 @@ public partial class MainWindow : Window
 
     private C64Theme Theme => _terminal.Theme;
 
+    private Layout CurrentLayout => _settings.Layout;
+
+    private bool CrtEnabled => _settings.Crt;
+
     public MainWindow()
     {
         InitializeComponent();
 
-        _options = CommandLine.Parse(Environment.GetCommandLineArgs());
-        _layout = _options.Layout;
-        _crtEnabled = _options.Crt;
-        _screen = new ScreenBuffer(_options.Columns, _options.Rows, C64Theme.Default.Foreground);
-        _terminal = new VtTerminal(_screen, C64Theme.Default);
+        _settings = AppSettings.Load(AppSettings.DefaultPath).WithCommandLine(Environment.GetCommandLineArgs());
+        var (columns, rows) = _settings.StartGrid;
+        var theme = C64Theme.Default with { Foreground = _settings.TextColour };
+        _screen = new ScreenBuffer(columns, rows, theme.Foreground);
+        _terminal = new VtTerminal(_screen, theme);
         _terminal.TitleChanged += title => Title = string.IsNullOrWhiteSpace(title) ? AppTitle : $"{AppTitle} - {title}";
         _terminal.Response += response => _session?.Write(response);
 
@@ -85,14 +96,14 @@ public partial class MainWindow : Window
         // Sizes are worked out in physical pixels and converted to WPF's device-independent units,
         // so the grid that FitScreen computes later matches the one we start with on high-DPI screens.
         var dpi = VisualTreeHelper.GetDpi(this);
-        var startup = new FrameRenderer(_options.Columns, _options.Rows);
+        var startup = new FrameRenderer(columns, rows);
         _scale = Math.Clamp(
             (int)Math.Min(
                 SystemParameters.WorkArea.Width * dpi.DpiScaleX * 0.9 / startup.Width,
                 SystemParameters.WorkArea.Height * dpi.DpiScaleY * 0.9 / startup.Height),
             1,
             MaxStartupScale);
-        (_renderer, _frame, _bitmap) = CreateFrame(_options.Columns, _options.Rows);
+        (_renderer, _frame, _bitmap) = CreateFrame(columns, rows);
         UpdateWindowBackground();
         Root.Width = Screen.Width = _renderer.Width * _scale / dpi.DpiScaleX;
         Root.Height = Screen.Height = _renderer.Height * _scale / dpi.DpiScaleY;
@@ -102,7 +113,15 @@ public partial class MainWindow : Window
         // This constructor overload starts the timer.
         _timer = new DispatcherTimer(TimeSpan.FromMilliseconds(15), DispatcherPriority.Render, (_, _) => RenderIfChanged(), Dispatcher);
 
-        Loaded += (_, _) => StartShell();
+        Loaded += (_, _) =>
+        {
+            if (_settings.StartupSound)
+            {
+                _sounds.Chirp();
+            }
+
+            StartShell();
+        };
         ContentRendered += OnContentRendered;
         SizeChanged += (_, _) => FitScreen();
         DpiChanged += (_, _) => FitScreen();
@@ -120,7 +139,7 @@ public partial class MainWindow : Window
     private (FrameRenderer, uint[], WriteableBitmap) CreateFrame(int columns, int rows)
     {
         var renderer = new FrameRenderer(columns, rows);
-        if (_crtEnabled)
+        if (CrtEnabled)
         {
             _crt = new CrtFilter(renderer.Width, renderer.Height, _scale);
             _crtOutput = _crt.CreateOutput();
@@ -141,36 +160,62 @@ public partial class MainWindow : Window
 
     /// <summary>The space around the picture: the border colour, or black like a TV's bezel with the CRT effect.</summary>
     private void UpdateWindowBackground() =>
-        Background = _crtEnabled ? Brushes.Black : new SolidColorBrush(ToColor(C64Palette.ToArgb(Theme.Border)));
+        Background = CrtEnabled ? Brushes.Black : new SolidColorBrush(ToColor(C64Palette.ToArgb(Theme.Border)));
 
     private void StartShell()
     {
-        var cmd = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
         var session = new PseudoConsoleSession(
-            ShellCommands.CmdWithBanner(cmd, _screen.Columns, _options.Prompt),
+            ShellCommands.For(_settings.Shell, _screen.Columns, _settings.Prompt, Environment.GetEnvironmentVariable("ComSpec")),
             _screen.Columns,
             _screen.Rows,
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
-        session.OutputReceived += OnShellOutput;
+
+        // Events from a session that has since been replaced (after a shell change) are ignored.
+        session.OutputReceived += text =>
+        {
+            if (ReferenceEquals(Volatile.Read(ref _session), session))
+            {
+                OnShellOutput(text);
+            }
+        };
+
         // When the user types "exit", close the window, like other terminals do.
         session.Exited += () => Dispatcher.BeginInvoke(() =>
         {
-            if (!_closed)
+            if (!_closed && ReferenceEquals(_session, session))
             {
                 Close();
             }
         });
 
+        Volatile.Write(ref _session, session);
         try
         {
             session.Start();
-            _session = session;
         }
         catch (Exception e)
         {
+            Volatile.Write(ref _session, null);
             session.Dispose();
-            ShowError("SHELL", e.Message);
+            ShowError("SHELL", $"{ShellCommands.DisplayName(_settings.Shell)}: {e.Message}");
         }
+    }
+
+    /// <summary>Ends the current shell and starts the chosen one on a fresh screen.</summary>
+    private void RestartShell()
+    {
+        var old = Interlocked.Exchange(ref _session, null);
+        old?.Dispose();
+        lock (_outputLock)
+        {
+            _pendingOutput.Clear();
+        }
+
+        _terminal.Feed("\x1B" + "c"); // full reset: colours, modes, alternate screen
+        _screen.ClearScrollback();
+        _scrollOffset = 0;
+        _selection = null;
+        StartShell();
     }
 
     /// <summary>Shows a failure the C64 way, e.g. <c>?SHELL  ERROR</c>, followed by the details.</summary>
@@ -237,6 +282,7 @@ public partial class MainWindow : Window
         _closed = true;
         _timer.Stop();
         _session?.Dispose();
+        _sounds.Dispose();
     }
 
     /// <summary>
@@ -254,7 +300,7 @@ public partial class MainWindow : Window
 
         var dpi = VisualTreeHelper.GetDpi(this);
         var (columns, rows, scale) = ScreenLayout.Fit(
-            _layout, Root.ActualWidth * dpi.DpiScaleX, Root.ActualHeight * dpi.DpiScaleY, _scale, _renderer.BorderX, _renderer.BorderY);
+            CurrentLayout, Root.ActualWidth * dpi.DpiScaleX, Root.ActualHeight * dpi.DpiScaleY, _scale, _renderer.BorderX, _renderer.BorderY);
 
         var gridChanged = columns != _screen.Columns || rows != _screen.Rows;
         if (gridChanged)
@@ -273,7 +319,7 @@ public partial class MainWindow : Window
         }
 
         // The CRT bitmap is drawn at the final size, so it also has to be rebuilt when the scale changes.
-        if (gridChanged || rebuild || (scale != _scale && _crtEnabled))
+        if (gridChanged || rebuild || (scale != _scale && CrtEnabled))
         {
             _scale = scale;
             (_renderer, _frame, _bitmap) = CreateFrame(columns, rows);
@@ -289,7 +335,7 @@ public partial class MainWindow : Window
     private void ChangeScale(int delta)
     {
         var scale = Math.Clamp(_scale + delta, 1, MaxScale);
-        if (scale != _scale && _layout == Layout.Modern)
+        if (scale != _scale && CurrentLayout == Layout.Modern)
         {
             _scale = scale;
             FitScreen(rebuild: true);
@@ -297,19 +343,11 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Ctrl+Shift+L: switches between the fixed 40×25 screen and the resizable grid.</summary>
-    private void ToggleLayout()
-    {
-        _layout = _layout == Layout.Modern ? Layout.Authentic : Layout.Modern;
-        FitScreen(rebuild: true);
-    }
+    private void ToggleLayout() =>
+        ApplySettings(_settings with { Layout = CurrentLayout == Layout.Modern ? Layout.Authentic : Layout.Modern });
 
     /// <summary>Ctrl+Shift+R: turns the CRT effect on or off.</summary>
-    private void ToggleCrt()
-    {
-        _crtEnabled = !_crtEnabled;
-        UpdateWindowBackground();
-        FitScreen(rebuild: true);
-    }
+    private void ToggleCrt() => ApplySettings(_settings with { Crt = !_settings.Crt });
 
     /// <summary>Alt+Enter: borderless fullscreen and back.</summary>
     private void ToggleFullscreen()
@@ -335,22 +373,110 @@ public partial class MainWindow : Window
     }
 
     /// <summary>The C64 colour keys: change the colour of text typed and printed from now on.</summary>
-    private void SetTextColour(byte colour)
+    private void SetTextColour(byte colour) => ApplySettings(_settings with { TextColour = colour });
+
+    /// <summary>
+    /// Makes new settings take effect and saves them. Layout, CRT and colour change at once;
+    /// a different shell or prompt only takes effect when <paramref name="restartShell"/> is set.
+    /// </summary>
+    private void ApplySettings(AppSettings settings, bool restartShell = false)
     {
-        _terminal.Theme = Theme with { Foreground = colour };
+        var old = _settings;
+        _settings = settings;
+
+        if (settings.TextColour != old.TextColour)
+        {
+            _terminal.Theme = Theme with { Foreground = settings.TextColour };
+        }
+
+        if (settings.Crt != old.Crt)
+        {
+            UpdateWindowBackground();
+        }
+
+        if (settings.Layout != old.Layout || settings.Crt != old.Crt)
+        {
+            FitScreen(rebuild: true);
+        }
+
+        if (restartShell)
+        {
+            RestartShell();
+        }
+
+        try
+        {
+            settings.Save(AppSettings.DefaultPath);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Not being able to save is no reason to stop; the settings still apply to this window.
+        }
+
+        _renderedVersion = -1;
+        RenderIfChanged();
+    }
+
+    /// <summary>Ctrl+Shift+S: opens the settings screen.</summary>
+    private void OpenMenu()
+    {
+        _menu = new SettingsMenu(_settings);
+        _menuShellAtOpen = (_settings.Shell, _settings.Prompt);
+        _selection = null;
+        _renderedVersion = -1;
+        RenderIfChanged();
+    }
+
+    /// <summary>Keys while the settings screen is open. Every change applies at once; shell changes apply on close.</summary>
+    private void HandleMenuKey(Key key)
+    {
+        var menu = _menu!;
+        var result = key == Key.Space
+            ? menu.HandleSpace()
+            : KeyInput.ToTerminalKey(key) is { } terminalKey ? menu.HandleKey(terminalKey) : SettingsMenu.Result.None;
+
+        switch (result)
+        {
+            case SettingsMenu.Result.Changed:
+                ApplySettings(menu.Settings);
+                break;
+            case SettingsMenu.Result.Closed:
+                _menu = null;
+                var shellChanged = (menu.Settings.Shell, menu.Settings.Prompt) != _menuShellAtOpen;
+                ApplySettings(menu.Settings, restartShell: shellChanged);
+                break;
+        }
+
+        if (_settings.KeyClicks && result != SettingsMenu.Result.None)
+        {
+            _sounds.Click();
+        }
+
+        _renderedVersion = -1;
         RenderIfChanged();
     }
 
     private void RenderIfChanged()
     {
-        var cursorVisible = IsActive && _terminal.CursorVisible && CursorBlink.IsVisible(_blinkClock.Elapsed);
+        var cursorVisible = _menu is null && IsActive && _terminal.CursorVisible && CursorBlink.IsVisible(_blinkClock.Elapsed);
         if (_screen.Version == _renderedVersion && cursorVisible == _renderedCursor &&
             _scrollOffset == _renderedScrollOffset && _selection == _renderedSelection)
         {
             return;
         }
 
-        _renderer.Render(_screen, Theme, cursorVisible, _frame, _scrollOffset, _selection);
+        if (_menu is { } menu)
+        {
+            // The settings screen is drawn on its own buffer the size of the terminal, which stays untouched.
+            var menuScreen = new ScreenBuffer(_screen.Columns, _screen.Rows, Theme.Foreground, scrollbackLimit: 0);
+            menu.Draw(menuScreen, Theme);
+            _renderer.Render(menuScreen, Theme, cursorVisible: false, _frame);
+        }
+        else
+        {
+            _renderer.Render(_screen, Theme, cursorVisible, _frame, _scrollOffset, _selection);
+        }
+
         if (_crt is { } crt && _crtOutput is { } output)
         {
             crt.Apply(_frame, output);
@@ -375,6 +501,11 @@ public partial class MainWindow : Window
 
     private void OnMouseWheel(object sender, MouseWheelEventArgs e)
     {
+        if (_menu is not null)
+        {
+            return;
+        }
+
         var lines = e.Delta / 120 * WheelLines;
         if (lines == 0)
         {
@@ -414,6 +545,11 @@ public partial class MainWindow : Window
 
     private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (_menu is not null)
+        {
+            return;
+        }
+
         var position = PositionAt(e);
         _selection = new TextSelection(position, position);
         _selecting = true;
@@ -452,6 +588,11 @@ public partial class MainWindow : Window
     /// <summary>Right click copies the selection if there is one, otherwise pastes, like the classic Windows console.</summary>
     private void OnMouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (_menu is not null)
+        {
+            return;
+        }
+
         if (!CopySelection())
         {
             Paste();
@@ -504,9 +645,9 @@ public partial class MainWindow : Window
     private void OnTextInput(object sender, TextCompositionEventArgs e)
     {
         var text = new string(e.Text.Where(c => !char.IsControl(c)).ToArray());
-        if (text.Length > 0)
+        if (text.Length > 0 && _menu is null)
         {
-            SendInput(text);
+            SendInput(text, click: true);
         }
     }
 
@@ -514,6 +655,17 @@ public partial class MainWindow : Window
     {
         var modifiers = KeyInput.Modifiers(Keyboard.Modifiers);
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        if (_menu is not null)
+        {
+            // Alt+Enter still toggles fullscreen and Alt+F4 still closes; every other key belongs to the menu.
+            if (!(modifiers == KeyModifiers.Alt && key is Key.Enter or Key.F4))
+            {
+                e.Handled = true;
+                HandleMenuKey(key);
+                return;
+            }
+        }
 
         if (HandleAppShortcut(key, modifiers))
         {
@@ -538,7 +690,7 @@ public partial class MainWindow : Window
         }
 
         e.Handled = true;
-        SendInput(sequence);
+        SendInput(sequence, click: true);
     }
 
     /// <summary>Copy/paste, scrollback and scale keys. Returns true when the key was used by the app.</summary>
@@ -562,6 +714,9 @@ public partial class MainWindow : Window
                 return true;
             case Key.R when modifiers == ctrlShift:
                 ToggleCrt();
+                return true;
+            case Key.S when modifiers == ctrlShift:
+                OpenMenu();
                 return true;
             // Ctrl+C copies when something is selected, and is sent to the shell as an interrupt otherwise.
             case Key.C when modifiers == ctrlShift || (modifiers == KeyModifiers.Control && _selection is not null):
@@ -588,9 +743,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SendInput(string text)
+    private void SendInput(string text, bool click = false)
     {
         _session?.Write(text);
+        if (click && _settings.KeyClicks)
+        {
+            _sounds.Click();
+        }
 
         // Typing jumps back to the live screen and drops the selection, as in other terminals.
         _selection = null;
