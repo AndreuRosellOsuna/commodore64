@@ -15,7 +15,7 @@ See [PLAN.md](PLAN.md) for the full roadmap.
 | 3. VT completeness: scroll regions, alternate screen, resize, scrollback, copy/paste | ✅ done | `MILESTONE_3` |
 | 4. Look & feel: layouts, fullscreen, CRT effect, colour keys, `READY.` prompt | ✅ done | `MILESTONE_4` |
 | 5. Sound & extras: key clicks, startup chirp, settings screen, choice of shell | ✅ done | `MILESTONE_5` |
-| 6. Ship: installer, release builds, screenshots | next | |
+| 6. Ship: installer, release workflow, app icon | ✅ done | `MILESTONE_6` |
 
 The window runs a real shell: **cmd.exe** by default, or **Windows PowerShell**, **PowerShell 7** or **WSL**. It prints the C64 banner, and the prompt is the C64's `READY.` with the cursor on the line below. Typing, Enter, Backspace, the arrow keys, Home/End, Delete, Tab completion, Ctrl+C and the F-keys are all passed to the shell. Typing `exit` closes the window.
 
@@ -86,16 +86,31 @@ As on the C64, a new text colour applies to what is typed and printed from then 
 
 [`extras/prompts`](extras/prompts) has the same prompt for use elsewhere: `ready.cmd` for cmd (also from AutoRun) and `ready.ps1` for PowerShell (dot-source it or add it to `$PROFILE`).
 
+## Install
+
+**From a release:** open the repository's **Releases** page and download either file:
+
+- `C64Console-<version>-setup.exe` installs it for your user (no admin rights needed), with a Start menu shortcut, an optional desktop shortcut and an uninstaller. The `READY.` prompt scripts are installed in the `prompts` folder.
+- `C64Console-<version>-win-x64.exe` runs without installing. It is self-contained, so you don't need .NET.
+
+The files aren't code-signed, so Windows SmartScreen may warn the first time: choose **More info → Run anyway**.
+
+**Latest build:** every push builds both files on GitHub Actions. Open the latest run of the **build** workflow and download the `C64Console-setup` or `C64Console-win-x64` artifact.
+
 Requires Windows 10 version 1809 or later, which is when ConPTY was added.
 
-## Run it
+## Build from source
 
-**Download:** every push builds `C64Console.exe` on GitHub Actions. Open the latest run of the **build** workflow and download the `C64Console-win-x64` artifact. It is self-contained, so you don't need to install .NET.
-
-**Build from source** (Windows, .NET 8 SDK):
+On Windows, with the .NET 8 SDK:
 
 ```powershell
 dotnet run --project src/C64Console.App
+```
+
+Build the exe and the installer the way a release does (needs Inno Setup 6, which the script installs with Chocolatey if it's missing):
+
+```powershell
+./build/package.ps1 -Version 1.0.0
 ```
 
 Run the tests (any OS):
@@ -114,6 +129,18 @@ dotnet run --project tools/C64Console.Preview -- docs/boot-screen.png 2 40
 dotnet run --project tools/C64Console.Preview -- docs/crt-screen.png 3 40 --crt
 ```
 
+Regenerate the app icon (a tiny C64 screen drawn with the app's own font):
+
+```sh
+dotnet run --project tools/C64Console.Preview -- --icon src/C64Console.App/Assets/app.ico
+```
+
+## Releasing
+
+1. Update the version in `Directory.Build.props` and add a section to `CHANGELOG.md`.
+2. Either push a tag such as `v1.0.0`, or open **Actions → release → Run workflow** and type the version (the tag is then created for you).
+3. The **release** workflow tests, builds the exe and installer, and publishes a GitHub Release with both files.
+
 ## Project layout
 
 | Path | What it is |
@@ -125,6 +152,9 @@ dotnet run --project tools/C64Console.Preview -- docs/crt-screen.png 3 40 --crt
 | `tests/C64Console.Core.Tests` | xUnit tests for Core |
 | `tools/C64Console.Preview` | Renders a screenshot PNG without Windows |
 | `extras/prompts` | `READY.` prompt scripts for cmd and PowerShell |
+| `installer/C64Console.iss` | Inno Setup script for the installer |
+| `build/package.ps1` | Builds the release exe and installer |
+| `.github/workflows` | `build` runs on every push; `release` publishes a GitHub Release |
 
 ## About the font
 

@@ -420,7 +420,7 @@ public partial class MainWindow : Window
     /// <summary>Ctrl+Shift+S: opens the settings screen.</summary>
     private void OpenMenu()
     {
-        _menu = new SettingsMenu(_settings);
+        _menu = new SettingsMenu(_settings, typeof(MainWindow).Assembly.GetName().Version?.ToString(3));
         _menuShellAtOpen = (_settings.Shell, _settings.Prompt);
         _selection = null;
         _renderedVersion = -1;

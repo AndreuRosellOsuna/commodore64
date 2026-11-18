@@ -171,6 +171,16 @@ public class Milestone5Tests
     }
 
     [Fact]
+    public void Menu_shows_the_version_near_the_bottom()
+    {
+        var screen = new ScreenBuffer(40, 25, C64Palette.LightBlue);
+
+        new SettingsMenu(new AppSettings(), "1.2.3").Draw(screen, C64Theme.Default);
+
+        Assert.Equal(" C64 CONSOLE V1.2.3", screen.RowText(23));
+    }
+
+    [Fact]
     public void Menu_fits_the_narrowest_screen_without_wrapping()
     {
         var screen = new ScreenBuffer(ScreenLayout.MinColumns, ScreenLayout.MinRows, C64Palette.LightBlue);

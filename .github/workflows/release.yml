@@ -1,0 +1,62 @@
+name: release
+
+# Publishes a GitHub Release with the exe and the installer.
+# Either push a tag such as v1.0.0, or run this workflow from the Actions tab and type the version:
+# then the tag is created for you on the commit you run it on.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, e.g. 1.0.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Work out the version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $version = if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { $env:INPUT_VERSION } else { $env:REF_NAME }
+          $version = $version.Trim().TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "The version must look like 1.2.3, not '$version'." }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Test
+        run: dotnet test C64Console.sln -c Release
+
+      - name: Package exe and installer
+        shell: pwsh
+        run: ./build/package.ps1 -Version $env:VERSION
+
+      - name: Name the exe after the version
+        shell: pwsh
+        run: Copy-Item publish/C64Console.exe "publish/C64Console-$env:VERSION-win-x64.exe"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: C64 Console ${{ env.VERSION }}
+          generate_release_notes: true
+          body: |
+            **Download** `C64Console-${{ env.VERSION }}-setup.exe` to install (Start menu shortcut, uninstaller, no admin rights needed),
+            or `C64Console-${{ env.VERSION }}-win-x64.exe` to run it without installing.
+            Requires Windows 10 version 1809 or later. See [CHANGELOG.md](CHANGELOG.md) for what's new.
+          files: |
+            installer/output/C64Console-${{ env.VERSION }}-setup.exe
+            publish/C64Console-${{ env.VERSION }}-win-x64.exe

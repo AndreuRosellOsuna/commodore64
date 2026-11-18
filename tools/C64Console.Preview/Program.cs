@@ -3,7 +3,16 @@ using C64Console.Preview;
 
 // Renders the boot screen to a PNG so the look can be checked on any OS (the app itself needs Windows).
 // Usage: dotnet run --project tools/C64Console.Preview -- [output.png] [scale] [columns] [--crt] [--settings]
+//    or: dotnet run --project tools/C64Console.Preview -- --icon src/C64Console.App/Assets/app.ico
 // --settings draws the settings screen instead of the boot screen.
+// --icon out.ico writes the app icon instead (see AppIcon).
+if (args.Length == 2 && args[0] == "--icon")
+{
+    AppIcon.WriteIco(args[1]);
+    Console.WriteLine($"Wrote {args[1]} ({string.Join(", ", AppIcon.Sizes)} px)");
+    return;
+}
+
 var crt = args.Contains("--crt");
 var settingsScreen = args.Contains("--settings");
 var positional = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToArray();
@@ -16,7 +25,8 @@ var theme = C64Theme.Default;
 var screen = new ScreenBuffer(columns, rows, theme.Foreground);
 if (settingsScreen)
 {
-    new SettingsMenu(new AppSettings { TextColour = C64Palette.Yellow }).Draw(screen, theme);
+    var version = typeof(SettingsMenu).Assembly.GetName().Version?.ToString(3);
+    new SettingsMenu(new AppSettings { TextColour = C64Palette.Yellow }, version).Draw(screen, theme);
 }
 else
 {

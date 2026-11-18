@@ -98,7 +98,7 @@ Defaults: border = 14 (light blue), background = 6 (blue), text = 14 (light blue
 | **3. VT completeness** ✅ done | SGR colours mapped to the C64 palette, erase/scroll, alternate screen (so `vim` and `less` work in WSL), resize, scrollback with the mouse wheel, copy/paste | 5–7 days |
 | **4. Look & feel polish** ✅ done | Authentic/Modern layouts, integer scaling, fullscreen, CRT shader, Ctrl+F1..F8 colour keys, custom `READY.` prompt scripts for cmd and PowerShell | 3–4 days |
 | **5. Sound & extras** ✅ done | Key clicks, startup chirp, settings UI (in the C64 style), choice of shell | 2 days |
-| **6. Ship** | Unit tests for the parser and buffer, GitHub Actions CI (`windows-latest`), single-file publish, MSIX or Inno Setup installer, README with screenshots | 2–3 days |
+| **6. Ship** ✅ done | Unit tests for the parser and buffer, GitHub Actions CI (`windows-latest`), single-file publish, MSIX or Inno Setup installer, README with screenshots | 2–3 days |
 
 **Total:** about 3–4 weeks for one developer, part time.
 

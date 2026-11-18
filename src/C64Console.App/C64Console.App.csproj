@@ -8,7 +8,14 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>C64Console</AssemblyName>
     <RootNamespace>C64Console.App</RootNamespace>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!-- No .pdb next to the published exe. -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Also used as the window icon. The preview tool regenerates it (see README). -->
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\C64Console.Core\C64Console.Core.csproj" />
     <ProjectReference Include="..\C64Console.Pty\C64Console.Pty.csproj" />

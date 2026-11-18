@@ -19,7 +19,14 @@ public sealed class SettingsMenu
 
     private static readonly string[] Help = ["CRSR UP/DOWN  CHOOSE", "CRSR LEFT/RIGHT  CHANGE", "RETURN/ESC  DONE"];
 
-    public SettingsMenu(AppSettings settings) => Settings = settings;
+    /// <param name="version">Shown at the bottom of the screen, e.g. "1.0.0".</param>
+    public SettingsMenu(AppSettings settings, string? version = null)
+    {
+        Settings = settings;
+        Version = version;
+    }
+
+    public string? Version { get; }
 
     public enum Item
     {
@@ -141,6 +148,11 @@ public sealed class SettingsMenu
         if (Selected is Item.Shell or Item.Prompt)
         {
             WriteAt(screen, 1, helpRow + Help.Length + 1, "SHELL RESTARTS ON RETURN");
+        }
+
+        if (Version is not null)
+        {
+            WriteAt(screen, 1, screen.Rows - 2, $"C64 CONSOLE V{Version}");
         }
 
         screen.MoveCursorTo(0, 0);

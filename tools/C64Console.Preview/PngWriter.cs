@@ -9,9 +9,12 @@ internal static class PngWriter
 {
     private static readonly uint[] CrcTable = BuildCrcTable();
 
-    public static void Write(string path, uint[] argb, int width, int height)
+    public static void Write(string path, uint[] argb, int width, int height) =>
+        File.WriteAllBytes(path, Encode(argb, width, height));
+
+    public static byte[] Encode(uint[] argb, int width, int height)
     {
-        using var file = File.Create(path);
+        using var file = new MemoryStream();
         file.Write([0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A]);
 
         var header = new byte[13];
@@ -41,6 +44,7 @@ internal static class PngWriter
 
         WriteChunk(file, "IDAT", compressed.ToArray());
         WriteChunk(file, "IEND", []);
+        return file.ToArray();
     }
 
     private static void WriteChunk(Stream stream, string type, byte[] data)

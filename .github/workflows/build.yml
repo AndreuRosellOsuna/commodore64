@@ -21,10 +21,18 @@ jobs:
       - name: Test
         run: dotnet test C64Console.sln -c Release --no-build
 
-      - name: Publish single-file exe
-        run: dotnet publish src/C64Console.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+      - name: Package exe and installer
+        shell: pwsh
+        run: |
+          $version = dotnet msbuild src/C64Console.App -getProperty:Version
+          ./build/package.ps1 -Version $version
 
       - uses: actions/upload-artifact@v4
         with:
           name: C64Console-win-x64
           path: publish/C64Console.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: C64Console-setup
+          path: installer/output/*.exe
