@@ -4,7 +4,7 @@ using System.Text;
 
 namespace C64Console.Preview;
 
-/// <summary>Minimal PNG encoder (8-bit RGB, no filtering), enough for screenshots.</summary>
+/// <summary>Minimal PNG encoder (8-bit RGBA, no filtering), enough for screenshots and icons.</summary>
 internal static class PngWriter
 {
     private static readonly uint[] CrcTable = BuildCrcTable();
@@ -21,21 +21,22 @@ internal static class PngWriter
         BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(0), width);
         BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(4), height);
         header[8] = 8; // bit depth
-        header[9] = 2; // colour type: RGB
+        header[9] = 6; // colour type: RGBA (icons declare 32 bits per pixel, so match that)
         WriteChunk(file, "IHDR", header);
 
         using var compressed = new MemoryStream();
         using (var zlib = new ZLibStream(compressed, CompressionLevel.SmallestSize, leaveOpen: true))
         {
-            var line = new byte[1 + width * 3]; // leading 0 = "no filter"
+            var line = new byte[1 + width * 4]; // leading 0 = "no filter"
             for (var y = 0; y < height; y++)
             {
                 for (var x = 0; x < width; x++)
                 {
                     var p = argb[y * width + x];
-                    line[1 + x * 3] = (byte)(p >> 16);
-                    line[2 + x * 3] = (byte)(p >> 8);
-                    line[3 + x * 3] = (byte)p;
+                    line[1 + x * 4] = (byte)(p >> 16);
+                    line[2 + x * 4] = (byte)(p >> 8);
+                    line[3 + x * 4] = (byte)p;
+                    line[4 + x * 4] = (byte)(p >> 24);
                 }
 
                 zlib.Write(line);
